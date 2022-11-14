@@ -1,0 +1,8 @@
+{
+    "account": "xf56565.west-us-2.azure",
+    "user": "SAANALTICS",
+    "password": "hETsUGA5",
+    "warehouse": "DATACLOUD_COMPUTE_WH",
+    "database": "DATACLOUD",
+    "schema": "ODS"
+ }
