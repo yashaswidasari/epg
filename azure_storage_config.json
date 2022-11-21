@@ -1,0 +1,5 @@
+{
+	"connection_string":"DefaultEndpointsProtocol=https;AccountName=trialbucket;AccountKey=nso4v25EyPNC1DlW/UxwBeN1WI29/xtLv1IMcaN2vHqrothZt9CoQ5OyV4roZ4x88aEI3M+7ZV6QYSzZN1lzrw==;EndpointSuffix=core.windows.net",
+	"source_container":"testthingy",
+	"destination_container":"testthingy"
+}

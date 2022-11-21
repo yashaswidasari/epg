@@ -1,12 +1,12 @@
 from shared_code.ExcelFiller.FillerInput import snowflake_quote_to_filler_input
 from shared_code.SnowparkStartGrids import create_multi_wt_svc, MultiWeightServiceModel
 from shared_code.SnowparkSession import SnowflakeQuoterSession
-from shared_code.SnowparkRatesPull import get_increase_ppx_rates, get_increase_xpo_rates
+from shared_code.SnowparkRatesPull import get_both_rates
 from shared_code.SalesforceRateResponseModels import format_pc_lb
-from shared_code.ExcelFiller.RateTemplateManager import ShoppedTemplateManager, PcLbZoneManager, GCZoneManager
+from shared_code.ExcelFiller.RateTemplateManager import ShoppedTemplateManager, PcLbEPSManager, PcLbIPAManager, WtBreakZoneManager
 from shared_code.DriveComms.DriveComms import DriveComms
 from shared_code.SnowparkGridTransforms import (except_final_services, match_matrix_rows, 
-    filter_matrix_prefers, matrix_pivot_details, quote_matrix_details_pc, get_lowest_cost_pc, quote_matrix_details_lb)
+    filter_matrix_prefers, matrix_pivot_details, quote_matrix_details_pc, get_lowest_cost_pc)
 from shared_code.ExcelFiller.FillerInput import (FillerInputGenerator, ServiceMapFromExcel, BaseRatesFromPandas, 
                                                  ZoneMapFromExcel, SurchargesDummy, QuoteParamsModel)
 from collections import defaultdict
@@ -35,12 +35,12 @@ def get_quote_filler_generator(request):
         106: 'lb',
         107: 'oz',
         108: 'oz',
-        33: 'gc_lb',
-        71: 'packetmaxwt'
+        33: 'gc_lb'
     }
 
     eps_weights = {
-        71: 'packetmaxwt'
+        71: 'packetmaxwt',
+        19: 'packetmaxwt'
     }
     
     requested_services = [int(svc) for svc in request['services'].split(',')]
@@ -74,15 +74,44 @@ def get_quote_filler_generator(request):
     
     return filler_input_generator
 
+class IncreasesDictFactory:
+    def __init__(self):
+        self.mirrors_map = {
+            105: [117],
+            108:[118],
+            102:[119]
+        }
 
-class FillerPasser:
+    def generate_increases_dict(self, request):
+        increases = {try_parse_int(increase['service']) : increase['increase'] for increase in request['increases']}
+        for root_svc, mirror_svcs in self.mirrors_map.items():
+            if root_svc in increases:
+                #ugh can overwrite if vals appear more than once
+                for mirror_svc in mirror_svcs:
+                    increases[mirror_svc] = increases[root_svc]
+        return increases
+
+
+class RateCardsGenerator:
     def __init__(self):
         self.template_map = {
             'ePG Parcel': ShoppedTemplateManager('excel_templates/parceltariff.xlsx'),
-            'ePacket': PcLbZoneManager('excel_templates/eps.xlsx')
+            'ePacket': PcLbEPSManager('excel_templates/eps.xlsx', template_source_tab='ePacket', end_tabs=['ePacket Rate Calculator', 'ePacket Zone List']),
+            'IPA': PcLbIPAManager('excel_templates/ipa.xlsx', template_source_tab='IPA Pack', end_tabs=['IPA Rate Calculator', 'Zone List']),
+            'Courier': WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List GC']),
+            'PMI' : WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List PMI']),
+            'EMI' : WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List PMEI']),
+            'PMIST' : WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List PMI']),
+            'EMIST' : WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List PMEI'])
         }
-        self.service_mapper = {code: 'ePG Parcel' for code in [102, 105, 106, 107, 108]}
+        self.service_mapper = {code: 'ePG Parcel' for code in [102, 105, 106, 107, 108, 109, 110, 111, 112]}
         self.service_mapper[71] = 'ePacket'
+        self.service_mapper[19] = 'IPA'
+        self.service_mapper[33] = 'Courier'
+        self.service_mapper[51] = 'PMI'
+        self.service_mapper[52] = 'EMI'
+        self.service_mapper[113] = 'PMIST'
+        self.service_mapper[114] = 'EMIST'
         
     def pass_fillers(self, fillers, quote_params, svc_id_dict=None):
         svc_id_dict = {} if not svc_id_dict else svc_id_dict
@@ -97,18 +126,25 @@ class FillerPasser:
             filename = f'{template_name} {safe_cust_name} ({quote_params.quote_num}).xlsx'
             template = self.template_map[template_name]
             io = BytesIO()
-            wb = template.save_new_workbook(filename, template_fillers, quote_params, in_mem=True)
-            wb.save(io)
+            try:
+                wb = template.save_new_workbook(filename, template_fillers, quote_params, in_mem=True)
+                wb.save(io)
+                file_content = base64.b64encode(io.getvalue()).decode()
+                success_model = {'success': True, 'content':file_content}
+            except Exception as e:
+                success_model = {'success': False, 'error_message': str(e)}
             #ugh need to test anything
-            response.append({
+            result = {
                 'type': template_name,
                 'filename': filename,
-                'content': base64.b64encode(io.getvalue()).decode(),
                 'services': [{
                     'service': template_filler.service_id,
-                    'quoteId':svc_id_dict.get(template_filler.service_id)} for template_filler in template_fillers],
-                'mimetype': mimetype
-            })
+                    'quoteId':svc_id_dict.get(template_filler.service_id)
+                    } for template_filler in template_fillers],
+                'mimetype': mimetype,
+                **success_model
+            }
+            response.append(result)
         return response
 
 
@@ -116,7 +152,7 @@ def save_quote_sheet(request):
     quote_params = QuoteParamsModel(cust_name = request['custName'], 
                                     quote_num = request['quoteNum'], 
                                     quote_date = request['quoteDate'])
-    fill_logic = FillerPasser()
+    fill_logic = RateCardsGenerator()
     fillers = get_quote_filler_generator(request).split_rates_by_svc()
     return fill_logic.pass_fillers(fillers, quote_params)
 
@@ -128,16 +164,18 @@ def try_parse_int(x):
         return x
 
 
-def save_increase(request, drive_comms:DriveComms):
+async def save_increase(request, drive_comms:DriveComms, eventloop):
     quote_params = QuoteParamsModel(cust_name = request['custName'], 
                                     quote_num = request['quoteNum'], 
                                     quote_date = request['quoteDate'])
     custno = request['custno']
-    fill_logic = FillerPasser()
-    increases = {try_parse_int(increase['service']) : increase['increase'] for increase in request['increases']}
+    fill_logic = RateCardsGenerator()
+    increases_factory = IncreasesDictFactory()
+    increases = increases_factory.generate_increases_dict(request)
     svc_id_dict = {try_parse_int(increase['service']) : increase['quoteId'] for increase in request['increases']}
-    updated_rates = get_increase_ppx_rates(custno, increases)
-    base_rates = updated_rates.base_rates
+
+    updated_ppx, updated_xpo = await get_both_rates(custno, increases, eventloop)
+    base_rates = updated_ppx.base_rates
     service_map = ServiceMapFromExcel('mock_tables/service_map.xlsx')
     #replace somewhere
     default_zones = ZoneMapFromExcel('mock_tables/zone_maps.xlsx')
@@ -152,7 +190,6 @@ def save_increase(request, drive_comms:DriveComms):
     if rate_cards:
         response['rateCards'] = rate_cards
 
-    updated_xpo = get_increase_xpo_rates(custno, increases)
     base_xpo = updated_xpo.base_rates
     if not base_xpo.empty:
         response['pcLbRates'] = [
@@ -163,29 +200,28 @@ def save_increase(request, drive_comms:DriveComms):
             }
             for service, rates in base_xpo.groupby('ORIGINAL_SERVICE')]
 
-    tariff = updated_rates.tariff
+    tariff = updated_ppx.tariff
     if not tariff.empty:
         io = BytesIO()
         tariff.to_csv(io, index=False)
-        tariff_filename = f'{custno}_ppx({quote_params.quote_num}).csv'
-        drive_comms.save_file_bytes(io.getvalue(), tariff_filename, f'ppx/{quote_params.quote_num}')
+        tariff_filename = f'{custno}_ppx_{quote_params.quote_num}.csv'
+        drive_comms.save_file_bytes(io.getvalue(), tariff_filename, f'quotes/{quote_params.quote_num}/ppx')
     xpo_uploads = updated_xpo.tariff
     if not xpo_uploads.empty:
         xpo_io = BytesIO()
         xpo_uploads.to_csv(xpo_io, index=False)
-        tariff_filename = f'{custno}_xpo({quote_params.quote_num}).csv'
-        drive_comms.save_file_bytes(xpo_io.getvalue(), tariff_filename, f'xpo/{quote_params.quote_num}')
+        tariff_filename = f'{custno}_xpo_{quote_params.quote_num}.csv'
+        drive_comms.save_file_bytes(xpo_io.getvalue(), tariff_filename, f'quotes/{quote_params.quote_num}/xpo')
 
     return response
 
 
 def confirm_quotes(quote_num, custno, services, drive_comms:DriveComms):
-    blob_container = 'testthingy'
     new_files = []
     for folder in ['xpo', 'ppx']:
-        upload_files = drive_comms.list_files(blob_container, f'{folder}/{quote_num}')
+        upload_files = drive_comms.list_files(f'{quote_num}/{folder}')
         for file in upload_files:
             new_path = f"{folder}_ready/{file.split('/')[-1]}"
-            new_file = drive_comms.copy_file(blob_container, file, blob_container, new_path)
+            new_file = drive_comms.copy_file(file, new_path)
             new_files.append(new_file)
     return new_files

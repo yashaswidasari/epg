@@ -7,7 +7,7 @@ from shared_code.DriveComms.DriveComms import AzureDriveComms
 from shared_code.AppWrappers import confirm_quotes
 from typing import List
 
-drive_comms = AzureDriveComms('DefaultEndpointsProtocol=https;AccountName=trialbucket;AccountKey=nso4v25EyPNC1DlW/UxwBeN1WI29/xtLv1IMcaN2vHqrothZt9CoQ5OyV4roZ4x88aEI3M+7ZV6QYSzZN1lzrw==;EndpointSuffix=core.windows.net')
+drive_comms = AzureDriveComms('azure_storage_config.json')
 
 @dataclass
 class ConfirmQuoteRequest:

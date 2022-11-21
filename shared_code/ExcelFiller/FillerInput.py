@@ -79,7 +79,7 @@ class ZoneMap(ABC):
         
 class ZoneMapFromExcel(ZoneMap):
     def __init__(self, zone_map_path):
-        cust_zones = pd.read_excel(zone_map_path, dtype=str, keep_default_na=False).astype({'ORIGINAL_SERVICE':int}) #this is the query equivalent, results should already be joined and filtered
+        cust_zones = pd.read_excel(zone_map_path, dtype=str, keep_default_na=False).astype({'ORIGINAL_SERVICE':int, 'ZONE_ORDER':int}) #this is the query equivalent, results should already be joined and filtered
         self.cust_zones = cust_zones
         validate_missing_columns(self.ZONE_COLS, cust_zones.columns)
        

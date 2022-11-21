@@ -32,9 +32,10 @@ from typing import Dict, List, Set
 
 class RateCardManager(ABC):
     
-    def __init__(self, template_path: str, start_tabs: List[str] = None, 
-                 end_tabs: List[str] = None,*args, **kwargs):
+    def __init__(self, template_path: str, template_source_tab: str = None,
+                 start_tabs: List[str] = None, end_tabs: List[str] = None, *args, **kwargs):
         self.template_path = template_path
+        self.template_source_tab = template_source_tab
         with open(self.template_path, 'rb') as f:
             self.template = BytesIO(f.read())
         self.start_tabs = start_tabs
@@ -105,20 +106,37 @@ class ShoppedTemplateManager(RateCardManager):
 class PcLbZoneManager(RateCardManager):
     
     def assign_filler_logic(self, filler_input: FillerInputModel) -> Tuple[str, RateTabFiller]:
-        return 'ePacket', PcLbZoneFiller(rate_start_row=11, rate_start_col=4,
-                                    name_cells = ['B7'], source_tab='ePacket',
+        return self.template_source_tab, PcLbZoneFiller(rate_start_row=11, rate_start_col=4,
+                                    name_cells = ['B7'], source_tab= self.template_source_tab,
                                     zones_to_int=True)
     
     def check_keep_tabs(self, all_tabs_used:List[str], filler_inputs:List[FillerInputModel]):
-        return all_tabs_used + ['ePacket Rate Calculator', 'ePacket Zone List']
-    
-    
-class GCZoneManager(RateCardManager):
+        add_end_tabs = self.end_tabs if self.end_tabs else []
+        return all_tabs_used + add_end_tabs
+
+
+class PcLbEPSManager(PcLbZoneManager):
     
     def assign_filler_logic(self, filler_input: FillerInputModel) -> Tuple[str, RateTabFiller]:
-        return 'Rates', WeightBreakZoneFiller(rate_start_row=13, rate_start_col=2,
-                                              name_cells = ['A8'], source_tab='Rates',
+        return self.template_source_tab, PcLbZoneFiller(rate_start_row=11, rate_start_col=4,
+                                    name_cells = ['B7'], source_tab= self.template_source_tab,
+                                    zones_to_int=True)
+
+class PcLbIPAManager(PcLbZoneManager):
+    
+    def assign_filler_logic(self, filler_input: FillerInputModel) -> Tuple[str, RateTabFiller]:
+        return self.template_source_tab, PcLbZoneFiller(rate_start_row=12, rate_start_col=4,
+                                    name_cells = ['B7'], source_tab= self.template_source_tab,
+                                    zones_to_int=True)
+    
+    
+class WtBreakZoneManager(RateCardManager):
+    
+    def assign_filler_logic(self, filler_input: FillerInputModel) -> Tuple[str, RateTabFiller]:
+        return self.template_source_tab, WeightBreakZoneFiller(rate_start_row=13, rate_start_col=2,
+                                              name_cells = ['A8'], source_tab=self.template_source_tab,
                                               name_row=8)
     
     def check_keep_tabs(self, all_tabs_used:List[str], filler_inputs:List[FillerInputModel]):
-        return all_tabs_used + ['Zone List']
+        add_end_tabs = self.end_tabs if self.end_tabs else []
+        return all_tabs_used + add_end_tabs

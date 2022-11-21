@@ -50,7 +50,12 @@ class RateTabFiller(ABC):
                      rates:FillerInputModel, formatted_rates: pd.DataFrame):
         cust_name = rates.cust_name
         for cell in self.name_cells:
-            rate_sheet[cell].value = f'{rates.service_name} - {cust_name}'
+            rate_sheet[cell].value = f'{cust_name} - 2023'
+
+    def freeze_start_cell(self, ws: xl.worksheet.worksheet.Worksheet):
+        start_col_letter = xl.utils.cell.get_column_letter(self.rate_start_col)
+        cell_name = f'{start_col_letter}{self.rate_start_row}'
+        ws.freeze_panes = cell_name
                 
     def rate_style_logic(self, row_i, col_j):
         return 'RateEven' if (row_i % 2 == 0) else 'RateOdd'
@@ -148,6 +153,7 @@ class WeightBreakFiller(RateTabFiller):
         self.insert_names(ws, rates=rates, formatted_rates=formatted_rates)
         self.insert_columns(ws, rates, formatted_rates)
         self.insert_weights(ws, rates, formatted_rates)
+        self.freeze_start_cell(ws)
         
     def format_rates(self, rates: FillerInputModel) -> pd.DataFrame:
         pivot_rates = rates.base_rates.pivot('PC_WT_MAX', 'ORIGINAL_CTY', 'PC_RATE')
@@ -155,8 +161,8 @@ class WeightBreakFiller(RateTabFiller):
             cty_order = (rates.zone_map
                              .sort_values(['ZONE_ORDER', 'ORIGINAL_CTY'])
                              ['ORIGINAL_CTY'].tolist())
-            return (pivot_rates.assign(**{cty : '-' for cty in cty_order if cty not in pivot_rates.columns})
-                        [cty_order])
+            cty_present = [cty for cty in cty_order if cty in pivot_rates.columns]
+            return (pivot_rates[cty_present])
         else:
             return pivot_rates
         
@@ -210,14 +216,20 @@ class WeightBreakZoneFiller(RateTabFiller):
         self.name_row = name_row
         
     def format_rates(self, rates: FillerInputModel) -> pd.DataFrame:
-        return (rates.base_rates
+        zone_order = (rates.zone_map
+                        .sort_values(['ZONE_ORDER', 'ZONE_CODE'])
+                        ['ZONE_CODE'].drop_duplicates().tolist())
+                        
+        pivot_rates = (rates.base_rates
                     .join(rates.zone_map.set_index('ORIGINAL_CTY'), 
                            on='ORIGINAL_CTY', rsuffix='_zone')
                     .dropna(subset=['ZONE_CODE'])
-                    .sort_values('ZONE_ORDER')
                     [['ZONE_CODE', 'PC_RATE', 'PC_WT_MAX']]
                     .drop_duplicates()
                     .pivot(index='PC_WT_MAX', columns='ZONE_CODE', values='PC_RATE'))
+
+        zones_present = [zone for zone in zone_order if zone in pivot_rates.columns]
+        return pivot_rates[zones_present]
     
     def cleanup_sheet(self, ws: xl.worksheet.worksheet.Worksheet, rates: FillerInputModel, formatted_rates: pd.DataFrame):
         self.insert_names(ws, rates=rates, formatted_rates=formatted_rates)
@@ -226,15 +238,25 @@ class WeightBreakZoneFiller(RateTabFiller):
         
     def insert_names(self, ws, rates, formatted_rates):
         name_length = formatted_rates.shape[1]
-                        
+        
+        #always one extra column left for service name
         ws.merge_cells(start_row=self.name_row, 
-                               end_row=self.name_row,
-                               start_column=self.rate_start_col,
-                               end_column=self.rate_start_col + name_length - 1)
-        start_col_letter = xl.utils.cell.get_column_letter(self.rate_start_col)
+                        end_row=self.name_row,
+                        start_column=self.rate_start_col - 1,
+                        end_column=self.rate_start_col + name_length - 1)
+        #one above is zone label, two above is zone description, 3 above
+        ws.merge_cells(start_row=self.rate_start_row - 3, 
+                        end_row=self.rate_start_row - 3,
+                        start_column=self.rate_start_col - 1,
+                        end_column=self.rate_start_col + name_length - 1)
+
+        start_col_letter = xl.utils.cell.get_column_letter(self.rate_start_col - 1)
         cell_name = f'{start_col_letter}{self.name_row}'
-        ws[cell_name].style = 'WeightEven'
+        cell_service = f'{start_col_letter}{self.rate_start_row - 3}'
+        ws[cell_name].style = 'NameHeader'
         ws[cell_name].value = rates.cust_name
+        ws[cell_service].style = 'ServiceHeader'
+        ws[cell_service].value = rates.service_name
         
         
     def insert_zones(self, rate_sheet: xl.worksheet.worksheet.Worksheet,
