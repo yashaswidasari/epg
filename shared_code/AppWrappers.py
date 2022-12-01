@@ -1,7 +1,7 @@
 from shared_code.ExcelFiller.FillerInput import snowflake_quote_to_filler_input
 from shared_code.SnowparkStartGrids import create_multi_wt_svc, MultiWeightServiceModel
 from shared_code.SnowparkSession import SnowflakeQuoterSession
-from shared_code.SnowparkRatesPull import get_both_rates
+from shared_code.SnowparkRatesPull import get_both_rates, get_increase_ppx_rates
 from shared_code.SalesforceRateResponseModels import format_pc_lb
 from shared_code.ExcelFiller.RateTemplateManager import ShoppedTemplateManager, PcLbEPSManager, PcLbIPAManager, WtBreakZoneManager
 from shared_code.DriveComms.DriveComms import DriveComms
@@ -73,23 +73,6 @@ def get_quote_filler_generator(request):
                                                   quote_params= quote_params)
     
     return filler_input_generator
-
-class IncreasesDictFactory:
-    def __init__(self):
-        self.mirrors_map = {
-            105: [117],
-            108:[118],
-            102:[119]
-        }
-
-    def generate_increases_dict(self, request):
-        increases = {try_parse_int(increase['service']) : increase['increase'] for increase in request['increases']}
-        for root_svc, mirror_svcs in self.mirrors_map.items():
-            if root_svc in increases:
-                #ugh can overwrite if vals appear more than once
-                for mirror_svc in mirror_svcs:
-                    increases[mirror_svc] = increases[root_svc]
-        return increases
 
 
 class RateCardsGenerator:
@@ -167,14 +150,15 @@ def try_parse_int(x):
 async def save_increase(request, drive_comms:DriveComms, eventloop):
     quote_params = QuoteParamsModel(cust_name = request['custName'], 
                                     quote_num = request['quoteNum'], 
-                                    quote_date = request['quoteDate'])
+                                    quote_date = request['quoteDate'],
+                                    custno = request['custno'])
     custno = request['custno']
     fill_logic = RateCardsGenerator()
-    increases_factory = IncreasesDictFactory()
-    increases = increases_factory.generate_increases_dict(request)
+    increases = request['increases']
     svc_id_dict = {try_parse_int(increase['service']) : increase['quoteId'] for increase in request['increases']}
 
     updated_ppx, updated_xpo = await get_both_rates(custno, increases, eventloop)
+    #updated_ppx = await get_increase_ppx_rates(custno, increases, eventloop)
     base_rates = updated_ppx.base_rates
     service_map = ServiceMapFromExcel('mock_tables/service_map.xlsx')
     #replace somewhere
@@ -200,6 +184,7 @@ async def save_increase(request, drive_comms:DriveComms, eventloop):
             }
             for service, rates in base_xpo.groupby('ORIGINAL_SERVICE')]
 
+    """
     tariff = updated_ppx.tariff
     if not tariff.empty:
         io = BytesIO()
@@ -212,6 +197,7 @@ async def save_increase(request, drive_comms:DriveComms, eventloop):
         xpo_uploads.to_csv(xpo_io, index=False)
         tariff_filename = f'{custno}_xpo_{quote_params.quote_num}.csv'
         drive_comms.save_file_bytes(xpo_io.getvalue(), tariff_filename, f'quotes/{quote_params.quote_num}/xpo')
+    """
 
     return response
 

@@ -256,7 +256,7 @@ def match_temp_matrix_rows(snow_session, volume, temp_matrix, vendor_override=No
     
     vendor_dim_wt = (volume['DIM_L'] * volume['DIM_W'] * volume['DIM_H'] * temp_mtx_augmented['DimFactor'])
     vendor_bill_wt = when(volume['Weight'] < vendor_dim_wt, vendor_dim_wt).otherwise(volume['Weight'])
-    matrix_kg_selector = vendor_bill_wt/2.2046/volume['pieces']-0.0001
+    matrix_kg_selector = vendor_bill_wt/2.2046/volume['pieces']-0.001
     
     dim_max_selector = ((volume['DIM_L'] <= temp_mtx_augmented['LengthMax'])
                         & (volume['DIM_W'] <= temp_mtx_augmented['WidthMax'])
