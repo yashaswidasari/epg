@@ -86,26 +86,31 @@ class ZoneMapFromExcel(ZoneMap):
         
 class Surcharges(ABC):
     cust_surcharges: pd.DataFrame
-    SURCHG_COLS = ['ORIGINAL_CTY', 'ORIGINAL_SERVICE', 'PRODUCT', 'SURCHARGE_PC', 'SURCHARGE_LB']
+    SURCHG_COLS = ['CTYCODE', 'ORIGINAL_SERVICE', 'PRODUCT', 'PC_RATE', 'WT_RATE']
     
     @abstractmethod
     def __init__(self, *args, **kwargs):
         pass
     
-    def get_surcharges(self, original_service):
-        return (self.cust_surcharges
-                    .query(f'ORIGINAL_SERVICE == {original_service}')
-                    [self.SURCHG_COLS])
-    
-    def backout_surcharges(self, base_rates: BaseRates):
-        pass
-    
+    def format_surcharges(self, cust_surcharges, *args, **kwargs):
+        try:
+            abbr_surcharges =  (cust_surcharges[['PRODUCT', 'CTYCODE', 'COUNTRY', 'WT_RATE']]
+                .groupby(['CTYCODE', 'COUNTRY', 'WT_RATE'])['PRODUCT'].apply(lambda s: ', '.join(list(s)))
+                .reset_index()
+                [['PRODUCT', 'COUNTRY', 'CTYCODE', 'WT_RATE']])
+            return abbr_surcharges
+        except:
+            return cust_surcharges
     
 class SurchargesFromExcel(Surcharges):
     def __init__(self, surcharge_path):
-        cust_surcharges = pd.read_excel(surcharge_path, dtype=str, keep_default_na=False).astype({'ORIGINAL_SERVICE':int}) #this is the query equivalent, results should already be joined and filtered
-        self.cust_surcharges = cust_surcharges
-        validate_missing_columns(self.SURCHG_COLS, cust_surcharges.columns)
+        cust_surcharges = pd.read_excel(surcharge_path, dtype=str, keep_default_na=False)#this is the query equivalent, results should already be joined and filtered
+        self.cust_surcharges = self.format_surcharges(cust_surcharges)
+        #validate_missing_columns(self.SURCHG_COLS, cust_surcharges.columns)
+
+class SurchargesFromDataFrame(Surcharges):
+    def __init__(self, cust_surcharges):
+        self.cust_surcharges = self.format_surcharges(cust_surcharges)
         
 class SurchargesDummy(Surcharges):
     def __init__(self):
@@ -142,7 +147,7 @@ class FillerInputGenerator:
         return [FillerInputModel(base_rates = service_rates,
                                  zone_map = self.zone_mapper.get_zone_map(service),
                                  service_id = service,
-                                 surcharges = self.surcharges.get_surcharges(service),
+                                 surcharges = self.surcharges.cust_surcharges,
                                  cust_name = self.quote_params.cust_name,
                                  **self.service_map.get_service_params(service))
                 for service, service_rates in self.base_rates.get_grouped_rates()]

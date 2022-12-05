@@ -2,7 +2,7 @@ import asyncio
 from shared_code.SnowparkSession import SnowflakeQuoterSession
 from shared_code.SnowparkUtility import sf_upload_df
 import datetime as dt
-from snowflake.snowpark.functions import to_date, lit, col, trim, round, when, coalesce
+from snowflake.snowpark.functions import to_date, to_timestamp, lit, col, trim, round, when, coalesce
 import pandas as pd
 from dataclasses import dataclass
 from typing import List, Dict
@@ -89,7 +89,7 @@ def backout_ppx_surcharges(session, rates, *args, **kwargs):
 
 
 def remove_ppnd_overweight(session, rates, *args, **kwargs):
-    is_ppnd = col('ORIGINAL_SERVICE').isin(**[lit(svc) for svc in ppnd_services])
+    is_ppnd = col('ORIGINAL_SERVICE').isin(*[lit(svc) for svc in ppnd_services])
     is_overweight = col('PC_WT_MAX') > lit(4.4)
     return rates.filter(~(is_ppnd & is_overweight))
 
@@ -112,7 +112,7 @@ def increase_zone_passthrough(session, rates_zones, *args, **kwargs):
                                  & (passthrough['ZONE_CODE'] == rates_zones['ZONE_CODE'])
                                  & (passthrough['MIN_WT'] < rates_zones['PC_WT_MAX'])
                                  & (passthrough['MAX_WT'] >= rates_zones['PC_WT_MAX']))
-    return increases.select(*[rates_zones[colname].alias(colname) for colname in rates_zones.columns if colname != 'INCREASE_PCT'],
+    return increases.select(*[rates_zones[colname].alias(colname) for colname in rates_zones.columns if colname not in ('INCREASE_PCT', 'ZONE_CODE')],
                             passthrough['INCREASE_PCT'].alias('INCREASE_PCT'))
 
 
@@ -154,7 +154,7 @@ def add_eps_sk(session, rates, epacket_increase_request, custno, *args, **kwargs
 ## End Utility and transformation steps ###################################################################################
 
 
-async def get_increase_ppx_rates(custno, increases, eventloop):
+async def get_increase_ppx_rates(custno, increases, eventloop, save_rates=False):
     """
     increases is dict by original service, 
     """
@@ -195,7 +195,7 @@ async def get_increase_ppx_rates(custno, increases, eventloop):
     else:
         all_increases = base_rates_increases
 
-    increased_tariff = apply_increase(session, all_increases, rate_columns=['PC_RATE', 'WT_RATE'])
+    increased_tariff = apply_increase(session, all_increases, rate_columns=['PC_RATE', 'WT_RATE']).cache_result()
 
     tariff_results = await eventloop.run_in_executor(
         None,
@@ -205,6 +205,9 @@ async def get_increase_ppx_rates(custno, increases, eventloop):
     updated_rates = pd.DataFrame(tariff_results)
     if updated_rates.empty:
         updated_rates = updated_rates.assign(**{colname: None for colname in ppx_tariff.columns})
+    elif save_rates:
+        await upload_rates_table(session=session, updated_sf=increased_tariff, target_table_name='RATES_MANAGEMENT.STAGE_PPX_PARATE01', eventloop=eventloop)
+
     """
     else:
         updated_rates = (rates_df
@@ -221,7 +224,7 @@ async def get_increase_ppx_rates(custno, increases, eventloop):
         database = 'ppx')
 
 
-async def get_increase_xpo_rates(custno, increases, eventloop):
+async def get_increase_xpo_rates(custno, increases, eventloop, save_rates=False):
     """
     increases is dict by original service, 
     """
@@ -248,7 +251,7 @@ async def get_increase_xpo_rates(custno, increases, eventloop):
             .filter((col('ACCTNUM') == lit(str(custno))) & date_filter & placeholder_filter & (col('Active') == lit(1)))
         )
 
-    updated_rates = apply_increase(session, xpo_rates.join(increases_sf, 'ORIGINAL_SERVICE'), rate_columns=['PCCHARGE', 'WEIGHTCHARGE'])
+    updated_rates = apply_increase(session, xpo_rates.join(increases_sf, 'ORIGINAL_SERVICE'), rate_columns=['PCCHARGE', 'WEIGHTCHARGE']).cache_result()
     rates_async = updated_rates.collect_nowait()
     rates_results = await eventloop.run_in_executor(
         None,
@@ -258,6 +261,8 @@ async def get_increase_xpo_rates(custno, increases, eventloop):
     rates_df = pd.DataFrame(rates_results)
     if rates_df.empty:
         rates_df = rates_df.assign(**{colname: None for colname in xpo_rates.columns})
+    elif save_rates:
+        await upload_rates_table(session=session, updated_sf=updated_rates, target_table_name='RATES_MANAGEMENT.STAGE_XPO_TBLRATES', eventloop=eventloop)
 
     return RatesPullFormats(
         base_rates = rates_df.rename(columns={'COUNTRYCODE':'ORIGINAL_CTY', 'PCCHARGE':'PC_RATE',
@@ -267,6 +272,23 @@ async def get_increase_xpo_rates(custno, increases, eventloop):
         database = 'xpotrack'
         )
 
-async def get_both_rates(custno, increases, eventloop):
-    return await asyncio.gather(get_increase_ppx_rates(custno, increases, eventloop), get_increase_xpo_rates(custno, increases, eventloop))
+async def get_both_rates(custno, increases, eventloop, save_rates=False):
+    return await asyncio.gather(get_increase_ppx_rates(custno, increases, eventloop, save_rates=save_rates), 
+        get_increase_xpo_rates(custno, increases, eventloop, save_rates=save_rates))
     #return await asyncio.gather(get_increase_ppx_rates(custno, increases, eventloop))
+
+async def upload_rates_table(session, updated_sf, target_table_name, eventloop):
+    now = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    common_cols = [colname 
+                    for colname 
+                    in session.session.table(target_table_name).columns
+                    if colname not in ['CREATED_DATETIME', 'MODIFIED_DATETIME']]
+
+    upload_sf = (updated_sf[common_cols]
+                .with_columns(['CREATED_DATETIME', 'MODIFIED_DATETIME'], 
+                              [to_timestamp(lit(now)), to_timestamp(lit(now))]))
+    await eventloop.run_in_executor(
+        None,
+        lambda df: df.write.mode('append').save_as_table(target_table_name),
+        upload_sf
+    ) 

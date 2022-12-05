@@ -8,11 +8,27 @@ from shared_code.DriveComms.DriveComms import DriveComms
 from shared_code.SnowparkGridTransforms import (except_final_services, match_matrix_rows, 
     filter_matrix_prefers, matrix_pivot_details, quote_matrix_details_pc, get_lowest_cost_pc)
 from shared_code.ExcelFiller.FillerInput import (FillerInputGenerator, ServiceMapFromExcel, BaseRatesFromPandas, 
-                                                 ZoneMapFromExcel, SurchargesDummy, QuoteParamsModel)
+                                                 ZoneMapFromExcel, SurchargesDummy, SurchargesFromExcel, SurchargesFromDataFrame,
+                                                 QuoteParamsModel)
 from collections import defaultdict
 from io import BytesIO
 import base64
 import pandas as pd
+
+
+class SurchargeMasterExcel:
+    """
+    ugh please match to snowflake although maybe if this is upfront just pull from snowflake on init
+    """
+    def __init__(self, sheet_path):
+        self.surcharge_master = pd.read_excel(sheet_path, keep_default_na=False, dtype={'PRODUCT':str, 'CUSTNO':str})
+
+    def get_cust_surcharges(self, custno):
+        cust_surcharges = self.surcharge_master.query(f'CUSTNO == "{custno}"')
+        return SurchargesFromDataFrame(cust_surcharges)
+
+
+surcharge_master = SurchargeMasterExcel('mock_tables/Surcharge Search.xlsx')
 
 def get_quote_filler_generator(request):
     quote_params = QuoteParamsModel(cust_name = request['custName'], 
@@ -77,9 +93,15 @@ def get_quote_filler_generator(request):
 
 class RateCardsGenerator:
     def __init__(self):
+        fsc_sheet_map = {
+            105:['CA FSC'],
+            107:['CA FSC']
+        }
+
         self.template_map = {
-            'ePG Parcel': ShoppedTemplateManager('excel_templates/parceltariff.xlsx'),
+            'ePG Parcel': ShoppedTemplateManager('excel_templates/parceltariff.xlsx', end_tabs=['Disclosure'], aux_end_tabs_map=fsc_sheet_map),
             'ePacket': PcLbEPSManager('excel_templates/eps.xlsx', template_source_tab='ePacket', end_tabs=['ePacket Rate Calculator', 'ePacket Zone List']),
+            'ePacket DDP': PcLbEPSManager('excel_templates/eps.xlsx', template_source_tab='ePacket DDP', end_tabs=[]),
             'IPA': PcLbIPAManager('excel_templates/ipa.xlsx', template_source_tab='IPA Pack', end_tabs=['IPA Rate Calculator', 'Zone List']),
             'Courier': WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List GC']),
             'PMI' : WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List PMI']),
@@ -89,6 +111,7 @@ class RateCardsGenerator:
         }
         self.service_mapper = {code: 'ePG Parcel' for code in [102, 105, 106, 107, 108, 109, 110, 111, 112]}
         self.service_mapper[71] = 'ePacket'
+        self.service_mapper[98] = 'ePacket DDP'
         self.service_mapper[19] = 'IPA'
         self.service_mapper[33] = 'Courier'
         self.service_mapper[51] = 'PMI'
@@ -155,18 +178,23 @@ async def save_increase(request, drive_comms:DriveComms, eventloop):
     custno = request['custno']
     fill_logic = RateCardsGenerator()
     increases = request['increases']
+    save_rates = False if request.get('saveRates') == None else request.get('saveRates')
     svc_id_dict = {try_parse_int(increase['service']) : increase['quoteId'] for increase in request['increases']}
 
-    updated_ppx, updated_xpo = await get_both_rates(custno, increases, eventloop)
+    updated_ppx, updated_xpo = await get_both_rates(custno, increases, eventloop, save_rates)
     #updated_ppx = await get_increase_ppx_rates(custno, increases, eventloop)
     base_rates = updated_ppx.base_rates
+    #what the hell i hate this so much
+    if 45 in svc_id_dict or 30 in svc_id_dict:
+        base_rates = jank_split_hotfix(base_rates)
     service_map = ServiceMapFromExcel('mock_tables/service_map.xlsx')
     #replace somewhere
     default_zones = ZoneMapFromExcel('mock_tables/zone_maps.xlsx')
+    surcharges = surcharge_master.get_cust_surcharges(custno)
     generator = FillerInputGenerator(base_rates = BaseRatesFromPandas(base_rates), 
                                                   service_map= service_map, 
                                                   zone_mapper= default_zones, 
-                                                  surcharges= SurchargesDummy(), 
+                                                  surcharges= surcharges, 
                                                   quote_params= quote_params)
     fillers = generator.split_rates_by_svc()
     response = {}
@@ -211,3 +239,8 @@ def confirm_quotes(quote_num, custno, services, drive_comms:DriveComms):
             new_file = drive_comms.copy_file(file, new_path)
             new_files.append(new_file)
     return new_files
+
+
+def jank_split_hotfix(base_rates):
+    default_ddp_cty = ['CA', 'GB', 'AT', 'AU', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NZ', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE']
+    return base_rates.query(f'not((ORIGINAL_CTY in {default_ddp_cty} and PRODUCT in ("07", "09")) or (ORIGINAL_CTY not in {default_ddp_cty} and PRODUCT in ("01", "05")))')
