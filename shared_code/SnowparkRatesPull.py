@@ -91,7 +91,8 @@ def backout_ppx_surcharges(session, rates, *args, **kwargs):
 def remove_ppnd_overweight(session, rates, *args, **kwargs):
     is_ppnd = col('ORIGINAL_SERVICE').isin(*[lit(svc) for svc in ppnd_services])
     is_overweight = col('PC_WT_MAX') > lit(4.4)
-    return rates.filter(~(is_ppnd & is_overweight))
+    replace_5_lb = when(is_ppnd & (col('PC_WT_MAX') == 5) & (col('PC_WT_MIN') == 4), lit(4.4)).otherwise(col('PC_WT_MAX'))
+    return rates.with_column('PC_WT_MAX', replace_5_lb).filter(~(is_ppnd & is_overweight))
 
 
 def add_sell_zones(session, rates, *args, **kwargs):
@@ -116,9 +117,11 @@ def increase_zone_passthrough(session, rates_zones, *args, **kwargs):
                             passthrough['INCREASE_PCT'].alias('INCREASE_PCT'))
 
 
-def apply_increase(session, rates_w_increases, rate_columns, *args, **kwargs):
+def apply_increase(session, rates_w_increases, rate_columns, start_date_column, *args, **kwargs):
+    revised_cols = rate_columns + [start_date_column]
+    revised_expressions = [round(col(rate_col)*(lit(1) + col('INCREASE_PCT')), 2) for rate_col in rate_columns] + [lit('1/23/2023')]
     return (rates_w_increases.with_columns([f'{colname}_OLD' for colname in rate_columns], [col(colname) for colname in rate_columns])
-                .with_columns(rate_columns, [round(col(rate_col)*(lit(1) + col('INCREASE_PCT')), 2) for rate_col in rate_columns]))
+                .with_columns(revised_cols, revised_expressions))
 
 
 def add_eps_sk(session, rates, epacket_increase_request, custno, *args, **kwargs):
@@ -142,7 +145,7 @@ def add_eps_sk(session, rates, epacket_increase_request, custno, *args, **kwargs
         'INCREASE_PCT': equivalent_increase,
         'PC_RATE': pc_cost,
         'WT_RATE': wt_cost,
-        'EFFECT_FR': '1/1/2022',
+        'EFFECT_FR': '1/23/2023',
         'EFFECT_TO': '1/1/2050',
         'PASSTHROUGH': True
     }
@@ -184,6 +187,7 @@ async def get_increase_ppx_rates(custno, increases, eventloop, save_rates=False)
         steps = [add_sell_zones, increase_zone_passthrough]
         for step in steps:
             passthrough_increases = step(session, passthrough_increases)
+            #eps_count = passthrough_increases.filter((col('ORIGINAL_SERVICE') == lit(71)) & (col('CTYCODE') != lit('CA'))).count()
         if 71 in increase_services:
             increase_71 = [increase for increase in increases if increase['service'] == 71][0]
             passthrough_increases = add_eps_sk(session, passthrough_increases, epacket_increase_request=increase_71, custno=custno)
@@ -195,7 +199,11 @@ async def get_increase_ppx_rates(custno, increases, eventloop, save_rates=False)
     else:
         all_increases = base_rates_increases
 
-    increased_tariff = apply_increase(session, all_increases, rate_columns=['PC_RATE', 'WT_RATE']).cache_result()
+    increased_tariff = await eventloop.run_in_executor(
+        None,
+        lambda df: apply_increase(session, df, rate_columns=['PC_RATE', 'WT_RATE'], start_date_column='EFFECT_FR').cache_result(),
+        all_increases
+    )
 
     tariff_results = await eventloop.run_in_executor(
         None,
@@ -251,7 +259,12 @@ async def get_increase_xpo_rates(custno, increases, eventloop, save_rates=False)
             .filter((col('ACCTNUM') == lit(str(custno))) & date_filter & placeholder_filter & (col('Active') == lit(1)))
         )
 
-    updated_rates = apply_increase(session, xpo_rates.join(increases_sf, 'ORIGINAL_SERVICE'), rate_columns=['PCCHARGE', 'WEIGHTCHARGE']).cache_result()
+    updated_rates = await eventloop.run_in_executor(
+        None,
+        lambda df: apply_increase(session, df.join(increases_sf, 'ORIGINAL_SERVICE'), rate_columns=['PCCHARGE', 'WEIGHTCHARGE'], start_date_column='STARTDATE').cache_result(),
+        xpo_rates
+    )
+
     rates_async = updated_rates.collect_nowait()
     rates_results = await eventloop.run_in_executor(
         None,
@@ -291,4 +304,4 @@ async def upload_rates_table(session, updated_sf, target_table_name, eventloop):
         None,
         lambda df: df.write.mode('append').save_as_table(target_table_name),
         upload_sf
-    ) 
+    )

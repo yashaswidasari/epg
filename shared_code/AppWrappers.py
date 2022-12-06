@@ -29,6 +29,8 @@ class SurchargeMasterExcel:
 
 
 surcharge_master = SurchargeMasterExcel('mock_tables/Surcharge Search.xlsx')
+default_zones = ZoneMapFromExcel('mock_tables/zone_maps.xlsx')
+service_map = ServiceMapFromExcel('mock_tables/service_map.xlsx')
 
 def get_quote_filler_generator(request):
     quote_params = QuoteParamsModel(cust_name = request['custName'], 
@@ -129,7 +131,7 @@ class RateCardsGenerator:
                 organized_fillers[self.service_mapper[filler.service_id]].append(filler)
         for template_name, template_fillers in organized_fillers.items():
             safe_cust_name = quote_params.cust_name.replace('/', '').replace(':', '')
-            filename = f'{template_name} {safe_cust_name} ({quote_params.quote_num}).xlsx'
+            filename = f'{safe_cust_name} 2023 {template_name}.xlsx'
             template = self.template_map[template_name]
             io = BytesIO()
             try:
@@ -143,6 +145,7 @@ class RateCardsGenerator:
             result = {
                 'type': template_name,
                 'filename': filename,
+                'relatedQuotes': list(set([svc_id_dict.get(template_filler.service_id) for template_filler in template_fillers])),
                 'services': [{
                     'service': template_filler.service_id,
                     'quoteId':svc_id_dict.get(template_filler.service_id)
@@ -170,7 +173,7 @@ def try_parse_int(x):
         return x
 
 
-async def save_increase(request, drive_comms:DriveComms, eventloop):
+async def save_increase(request, eventloop):
     quote_params = QuoteParamsModel(cust_name = request['custName'], 
                                     quote_num = request['quoteNum'], 
                                     quote_date = request['quoteDate'],
@@ -182,25 +185,32 @@ async def save_increase(request, drive_comms:DriveComms, eventloop):
     svc_id_dict = {try_parse_int(increase['service']) : increase['quoteId'] for increase in request['increases']}
 
     updated_ppx, updated_xpo = await get_both_rates(custno, increases, eventloop, save_rates)
+    response = {}
     #updated_ppx = await get_increase_ppx_rates(custno, increases, eventloop)
     base_rates = updated_ppx.base_rates
-    #what the hell i hate this so much
-    if 45 in svc_id_dict or 30 in svc_id_dict:
-        base_rates = jank_split_hotfix(base_rates)
-    service_map = ServiceMapFromExcel('mock_tables/service_map.xlsx')
-    #replace somewhere
-    default_zones = ZoneMapFromExcel('mock_tables/zone_maps.xlsx')
-    surcharges = surcharge_master.get_cust_surcharges(custno)
-    generator = FillerInputGenerator(base_rates = BaseRatesFromPandas(base_rates), 
-                                                  service_map= service_map, 
-                                                  zone_mapper= default_zones, 
-                                                  surcharges= surcharges, 
-                                                  quote_params= quote_params)
-    fillers = generator.split_rates_by_svc()
-    response = {}
-    rate_cards = fill_logic.pass_fillers(fillers, quote_params, svc_id_dict)
-    if rate_cards:
-        response['rateCards'] = rate_cards
+    if not base_rates.empty:
+        revised_ppx_quoteids = (updated_ppx.tariff[['ORIGINAL_SERVICE', 'QUOTEID']]
+            .drop_duplicates()
+            .set_index('ORIGINAL_SERVICE')
+            ['QUOTEID']
+            .to_dict())
+        #dict update y u no int
+        for svc, quoteid in revised_ppx_quoteids.items():
+            svc_id_dict[svc] = quoteid
+        #what the hell i hate this so much
+        if 45 in svc_id_dict or 30 in svc_id_dict:
+            base_rates = jank_split_hotfix(base_rates)
+        surcharges = surcharge_master.get_cust_surcharges(custno)
+        generator = FillerInputGenerator(base_rates = BaseRatesFromPandas(base_rates), 
+                                                    service_map= service_map, 
+                                                    zone_mapper= default_zones, 
+                                                    surcharges= surcharges, 
+                                                    quote_params= quote_params)
+        fillers = generator.split_rates_by_svc()
+        
+        rate_cards = fill_logic.pass_fillers(fillers, quote_params, svc_id_dict=svc_id_dict)
+        if rate_cards:
+            response['rateCards'] = rate_cards
 
     base_xpo = updated_xpo.base_rates
     if not base_xpo.empty:

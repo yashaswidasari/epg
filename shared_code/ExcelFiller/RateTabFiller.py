@@ -159,7 +159,7 @@ class WeightBreakFiller(RateTabFiller):
         pivot_rates = rates.base_rates.pivot('PC_WT_MAX', 'ORIGINAL_CTY', 'PC_RATE')
         if (type(rates.zone_map) == pd.DataFrame) and (not rates.zone_map.empty):
             cty_order = (rates.zone_map
-                             .sort_values(['ZONE_ORDER', 'ORIGINAL_CTY'])
+                             .sort_values(['ZONE_ORDER', 'COUNTRY_NAME'])
                              ['ORIGINAL_CTY'].tolist())
             cty_present = [cty for cty in cty_order if cty in pivot_rates.columns]
             return (pivot_rates[cty_present])

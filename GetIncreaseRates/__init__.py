@@ -6,7 +6,7 @@ import json
 from shared_code.DriveComms.DriveComms import AzureDriveComms, LocalDriveComms
 
 #drive_comms = LocalDriveComms('C:/Users/rtse/Documents/Python Scripts/epg wkg/2022-08-10 Rate Card Flask Demo/dummy_drive')
-drive_comms = AzureDriveComms('azure_storage_config.json')
+#drive_comms = AzureDriveComms('azure_storage_config.json')
 
 async def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
@@ -19,6 +19,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
     eventloop = asyncio.get_event_loop()
 
-    response = await save_increase(request, drive_comms, eventloop)
+    response = await save_increase(request, eventloop)
 
     return func.HttpResponse(json.dumps(response))
