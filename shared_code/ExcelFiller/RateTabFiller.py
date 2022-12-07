@@ -121,15 +121,31 @@ class WeightBreakFiller(RateTabFiller):
                                    self.rate_start_col - 1)
             cell.value = wt
             cell.style = 'WeightEven' if (i % 2 == 0) else 'WeightOdd'
+        if min(formatted_rates.index) < 0.5:
+            for i, wt in enumerate(formatted_rates.index):
+                oz = wt * 16
+                cell = rate_sheet.cell(self.rate_start_row + i, 
+                                    self.rate_start_col - 2)
+                cell.value = oz
+                cell.style = 'WeightEven' if (i % 2 == 0) else 'WeightOdd'
+
+            wt_title_cell = rate_sheet.cell(self.rate_start_row - 1, 
+                                self.rate_start_col - 2)
+            wt_title_cell.value = 'Weight (Oz)'
+            wt_title_cell.style = 'CountryHeader'
+            
+            blank_cell = rate_sheet.cell(self.rate_start_row - 2, 
+                                        self.rate_start_col - 2)
+            blank_cell.style = 'CountryHeader'
             
     def create_name_cells(self, rate_sheet: xl.worksheet.worksheet.Worksheet,
-                     rates: FillerInputModel, formatted_rates: pd.DataFrame) -> List[str]:        
+                     rates: FillerInputModel, formatted_rates: pd.DataFrame) -> Dict[str, List[int]]:        
         num_cells = (formatted_rates.shape[1]//(self.name_space + self.name_width)
                      + (((formatted_rates.shape[1] % (self.name_space + self.name_width))
                          >= self.name_width)))
         num_cells = max(num_cells, 1)
                         
-        new_name_cells = []
+        new_name_cells = {}
         for i in range(num_cells):
             start_pos = i * (self.name_width + self.name_space + 1) + self.rate_start_col
             rate_sheet.merge_cells(start_row=self.name_row, 
@@ -139,19 +155,38 @@ class WeightBreakFiller(RateTabFiller):
             start_col_letter = xl.utils.cell.get_column_letter(start_pos)
             cell_name = f'{start_col_letter}{self.name_row}'
             rate_sheet[cell_name].style = 'WeightOdd'
-            new_name_cells.append(cell_name)
+            new_name_cells[cell_name] = [start_pos, start_pos + self.name_width]
         return new_name_cells
     
     def insert_names(self, rate_sheet: xl.worksheet.worksheet.Worksheet,
-                     rates:FillerInputModel, formatted_rates: pd.DataFrame):
+                     rates:FillerInputModel, formatted_rates: pd.DataFrame,
+                     ppt_break_col = None):
         cust_name = rates.cust_name
         new_name_cells = self.create_name_cells(rate_sheet, rates, formatted_rates)
-        for cell in new_name_cells:
-            rate_sheet[cell].value = f'{rates.service_name} - {cust_name}'
+        for cell, (start_position, end_position) in new_name_cells.items():
+            if ppt_break_col:
+                if end_position < ppt_break_col:
+                    name_cell_content = f'{rates.service_name} Prime - {cust_name}'
+                elif (start_position < ppt_break_col) and (ppt_break_col < end_position):
+                    name_cell_content = ''
+                else:
+                    name_cell_content = f'{rates.service_name.replace("Tracked", "")} Non-Prime - {cust_name}'
+            else:
+                name_cell_content = f'{rates.service_name} - {cust_name}'
+            rate_sheet[cell].value = name_cell_content
             
     def cleanup_sheet(self, ws: xl.worksheet.worksheet.Worksheet, rates: FillerInputModel, formatted_rates: pd.DataFrame):
-        self.insert_names(ws, rates=rates, formatted_rates=formatted_rates)
+        if rates.service_abbr == 'PPT':
+            zone_dict = rates.zone_map.set_index('ORIGINAL_CTY').ZONE_CODE.to_dict()
+            break_cty_index = [i for i, cty in enumerate(formatted_rates.columns) if int(zone_dict.get(cty)) == 5][0]
+            ppt_break_col = break_cty_index + self.rate_start_col
+        else:
+            ppt_break_col = None
+        
         self.insert_columns(ws, rates, formatted_rates)
+        if ppt_break_col:
+            ws.insert_cols(ppt_break_col)
+        self.insert_names(ws, rates=rates, formatted_rates=formatted_rates, ppt_break_col=ppt_break_col)
         self.insert_weights(ws, rates, formatted_rates)
         self.freeze_start_cell(ws)
         
