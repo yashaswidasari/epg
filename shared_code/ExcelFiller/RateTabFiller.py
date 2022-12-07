@@ -191,7 +191,8 @@ class WeightBreakFiller(RateTabFiller):
         self.freeze_start_cell(ws)
         
     def format_rates(self, rates: FillerInputModel) -> pd.DataFrame:
-        pivot_rates = rates.base_rates.pivot('PC_WT_MAX', 'ORIGINAL_CTY', 'PC_RATE')
+        pivot_rates = (rates.base_rates.pivot('PC_WT_MAX', 'ORIGINAL_CTY', 'PC_RATE')
+            .bfill())
         if (type(rates.zone_map) == pd.DataFrame) and (not rates.zone_map.empty):
             cty_order = (rates.zone_map
                              .sort_values(['ZONE_ORDER', 'COUNTRY_NAME'])
