@@ -95,15 +95,15 @@ def get_quote_filler_generator(request):
 
 class RateCardsGenerator:
     def __init__(self):
-        fsc_sheet_map = {
+        aux_sheet_map = {
             105:['CA FSC'],
-            107:['CA FSC']
+            107:['CA FSC'],
+            71: ['ePacket Rate Calculator', 'ePacket Zone List']
         }
 
         self.template_map = {
-            'ePG Parcel': ShoppedTemplateManager('excel_templates/parceltariff.xlsx', end_tabs=['Disclosure'], aux_end_tabs_map=fsc_sheet_map),
-            'ePacket': PcLbEPSManager('excel_templates/eps.xlsx', template_source_tab='ePacket', end_tabs=['ePacket Rate Calculator', 'ePacket Zone List']),
-            'ePacket DDP': PcLbEPSManager('excel_templates/eps.xlsx', template_source_tab='ePacket DDP', end_tabs=[]),
+            'ePG Parcel': ShoppedTemplateManager('excel_templates/parceltariff.xlsx', end_tabs=['Disclosure'], aux_end_tabs_map=aux_sheet_map),
+            'ePacket': PcLbEPSManager('excel_templates/eps.xlsx', template_source_tab='ePacket', end_tabs=[], aux_end_tabs_map=aux_sheet_map),
             'IPA': PcLbIPAManager('excel_templates/ipa.xlsx', template_source_tab='IPA Pack', end_tabs=['IPA Rate Calculator', 'Zone List']),
             'Courier': WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List GC']),
             'PMI' : WtBreakZoneManager('excel_templates/zonewtbreaktemplate.xlsx', template_source_tab='Rates', end_tabs=['Zone List PMI']),
@@ -113,7 +113,7 @@ class RateCardsGenerator:
         }
         self.service_mapper = {code: 'ePG Parcel' for code in [102, 105, 106, 107, 108, 109, 110, 111, 112]}
         self.service_mapper[71] = 'ePacket'
-        self.service_mapper[98] = 'ePacket DDP'
+        self.service_mapper[98] = 'ePacket'
         self.service_mapper[19] = 'IPA'
         self.service_mapper[33] = 'Courier'
         self.service_mapper[51] = 'PMI'

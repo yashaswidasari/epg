@@ -144,9 +144,12 @@ class PcLbZoneManager(RateCardManager):
 class PcLbEPSManager(PcLbZoneManager):
     
     def assign_filler_logic(self, filler_input: FillerInputModel) -> Tuple[str, RateTabFiller]:
-        return FillerLogicUnit(self.template_source_tab, PcLbZoneFiller(rate_start_row=11, rate_start_col=4,
-                                    name_cells = ['B7'], source_tab= self.template_source_tab,
-                                    zones_to_int=True))
+        start_tabs = self.aux_start_tabs_map.get(filler_input.service_id) if self.aux_start_tabs_map else None
+        end_tabs = self.aux_end_tabs_map.get(filler_input.service_id) if self.aux_end_tabs_map else None
+        source_tab = 'ePacket DDP' if filler_input.service_abbr == 'EPSDP' else self.template_source_tab
+        return FillerLogicUnit(source_tab, PcLbZoneFiller(rate_start_row=11, rate_start_col=4,
+                                    name_cells = ['B7'], source_tab= source_tab,
+                                    zones_to_int=True), aux_start_tabs=start_tabs, aux_end_tabs=end_tabs)
 
 class PcLbIPAManager(PcLbZoneManager):
     
