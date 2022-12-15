@@ -17,8 +17,11 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
     request = {field: req_body.get(field) for field in required_fields}
     print(request)
 
-    eventloop = asyncio.get_event_loop()
+    if not request['increases']:
+        response = {}
 
-    response = await save_increase(request, eventloop)
+    else:
+        eventloop = asyncio.get_event_loop()
+        response = await save_increase(request, eventloop)
 
     return func.HttpResponse(json.dumps(response))

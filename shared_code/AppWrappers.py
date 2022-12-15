@@ -117,7 +117,7 @@ class RateCardsGenerator:
         self.service_mapper[19] = 'IPA'
         self.service_mapper[33] = 'Courier'
         self.service_mapper[51] = 'PMI'
-        self.service_mapper[52] = 'EMI'
+        self.service_mapper[62] = 'EMI'
         self.service_mapper[113] = 'PMIST'
         self.service_mapper[114] = 'EMIST'
         
@@ -181,6 +181,8 @@ async def save_increase(request, eventloop):
     custno = request['custno']
     fill_logic = RateCardsGenerator()
     increases = request['increases']
+    if not increases:
+        return {}
     save_rates = False if request.get('saveRates') == None else request.get('saveRates')
     svc_id_dict = {try_parse_int(increase['service']) : increase['quoteId'] for increase in request['increases']}
 
