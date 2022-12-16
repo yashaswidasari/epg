@@ -96,7 +96,7 @@ class Surcharges(ABC):
         try:
             ioss_cty = ['35', '36', '37']
             abbr_surcharges =  (cust_surcharges[['PRODUCT', 'CTYCODE', 'COUNTRY', 'WT_RATE']]
-                .filter(f'PRODUCT not in {ioss_cty}')
+                .query(f'PRODUCT not in {ioss_cty}')
                 .groupby(['CTYCODE', 'COUNTRY', 'WT_RATE'])['PRODUCT'].apply(lambda s: ', '.join(list(s)))
                 .reset_index()
                 [['PRODUCT', 'COUNTRY', 'CTYCODE', 'WT_RATE']])
