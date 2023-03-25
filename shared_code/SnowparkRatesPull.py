@@ -2,7 +2,9 @@ import asyncio
 from shared_code.SnowparkSession import SnowflakeQuoterSession
 from shared_code.SnowparkUtility import sf_upload_df
 import datetime as dt
+from snowflake.snowpark import DataFrame, Window
 from snowflake.snowpark.functions import to_date, to_timestamp, lit, col, trim, round, when, coalesce
+import snowflake.snowpark.functions as f
 import pandas as pd
 from dataclasses import dataclass
 from typing import List, Dict
@@ -305,3 +307,37 @@ async def upload_rates_table(session, updated_sf, target_table_name, eventloop):
         lambda df: df.write.mode('append').save_as_table(target_table_name),
         upload_sf
     )
+
+
+def get_lowest_rated_routes(snow_session: SnowflakeQuoterSession, wt_svcs: DataFrame,
+                     mail_format = 'PACK', mail_type = 'PR', mode='PC'):
+    """
+    modes: PC - only use pc rate, PCLB - keep wt rate separate for pickup
+    wt_svcs needs columns original_service, 
+    """
+    margin_factor = f.lit(1) - f.col('MARGIN')
+    if mode.lower() == 'pc':
+        pc_calc = (f.col('PC_RATE') + (f.col('WT_RATE') + f.col('PICKUP')) * f.col('PC_WT_MAX')) /margin_factor
+        wt_calc = f.lit(0)
+    else:
+        pc_calc = f.col('PC_RATE') / margin_factor
+        wt_calc = (f.col('WT_RATE') + f.col('PICKUP'))/margin_factor
+    ranking_window = Window.partition_by(['WTSVC_ID', 'ORIGINAL_CTY']).order_by('PC_RATE')
+                   
+    rated_routes = snow_session.session.table('RATES_MANAGEMENT.RATED_ROUTES')
+    retrieved_rates = (wt_svcs.join(rated_routes,
+                                   (wt_svcs['WEIGHT'] > rated_routes['PC_WT_MIN'])
+                                   & (wt_svcs['WEIGHT'] <= rated_routes['PC_WT_MAX'])
+                                   & (wt_svcs['OFFICE'] == rated_routes['OFFICE'])
+                                   & (wt_svcs['ORIGINAL_SERVICE'] == rated_routes['ORIGINAL_SERVICE'])
+                                   & (rated_routes['MAIL_FORMAT'] == f.lit(mail_format)) & (rated_routes['MAIL_TYPE'] == f.lit(mail_type)),
+                                   'inner')
+                           .with_column('ranking', f.row_number().over(ranking_window))
+                           .filter(f.col('ranking') == f.lit(1))
+                           .with_columns(['PC_RATE', 'WT_RATE'], 
+                                         [f.round(pc_calc, 2), f.round(wt_calc, 2)])
+                           .select(
+                                *[rated_routes[col].alias(col) for col in rated_routes.columns if col not in ['PC_RATE', 'WT_RATE']],
+                               'QUOTEID', 'PICKUP', 'MARGIN', 'PC_RATE', 'WT_RATE'
+                           ))
+    return retrieved_rates

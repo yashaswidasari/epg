@@ -1,7 +1,8 @@
 from shared_code.ExcelFiller.FillerInput import snowflake_quote_to_filler_input
 from shared_code.SnowparkStartGrids import create_multi_wt_svc, MultiWeightServiceModel
 from shared_code.SnowparkSession import SnowflakeQuoterSession
-from shared_code.SnowparkRatesPull import get_both_rates, get_increase_ppx_rates
+from shared_code.SnowparkRatesPull import get_both_rates, get_lowest_rated_routes
+from shared_code.SnowparkUtility import sf_upload_df
 from shared_code.SalesforceRateResponseModels import format_pc_lb
 from shared_code.ExcelFiller.RateTemplateManager import ShoppedTemplateManager, PcLbEPSManager, PcLbIPAManager, WtBreakZoneManager
 from shared_code.DriveComms.DriveComms import DriveComms
@@ -158,12 +159,57 @@ class RateCardsGenerator:
 
 
 def save_quote_sheet(request):
+    weight_sets = {
+        'oz': [i/16 for i in range(1, 71)] + [4.4],
+        'lb': [0.5] + [float(i) for i in range(1, 67)],
+        'ozlb' : [i/16 for i in range(1, 71)] + [4.4] + [float(i) for i in range(5, 67)],
+        'gc_lb': [float(i) for i in range(1, 151)],
+        'packetmaxwt': [4.4]
+    }
+
+    sel_weights = {
+        102 : 'oz',
+        105: 'lb',
+        106: 'lb',
+        107: 'oz',
+        108: 'oz',
+        33: 'gc_lb',
+        71: 'packetmaxwt',
+        19: 'packetmaxwt'
+    }
+
     quote_params = QuoteParamsModel(cust_name = request['custName'], 
                                     quote_num = request['quoteNum'], 
                                     quote_date = request['quoteDate'])
     fill_logic = RateCardsGenerator()
-    fillers = get_quote_filler_generator(request).split_rates_by_svc()
-    return fill_logic.pass_fillers(fillers, quote_params)
+    requested_services = [dict(**svc, 
+                           weight = weight_sets[sel_weights.get(svc['original_service'])],
+                           office = request['facility'],
+                           pickup = request['pickup'])  for svc in request['services']]
+    svc_id_dict = {svc['original_service']:svc['quoteId'] for svc in request['services']}
+    wt_svcs_request = (pd.DataFrame(requested_services).explode('weight')
+                       .reset_index()
+                       .drop(columns=['index'])
+                       .reset_index()
+                       .rename(columns={'index':'WTSVC_ID'}))
+    
+    session = SnowflakeQuoterSession(configs_path='snowflake_config.json', mode='configs')
+    wt_svcs = sf_upload_df(wt_svcs_request, session)
+    grid = get_lowest_rated_routes(session, wt_svcs)
+
+    results = pd.DataFrame(grid.collect())
+    results_filler = snowflake_quote_to_filler_input(results)
+    
+    filler_input_generator = FillerInputGenerator(base_rates = BaseRatesFromPandas(results_filler), 
+                                                  service_map= service_map, 
+                                                  zone_mapper= default_zones, 
+                                                  surcharges= SurchargesDummy(), 
+                                                  quote_params= quote_params)
+    
+    fillers = filler_input_generator.split_rates_by_svc()
+    rate_cards = fill_logic.pass_fillers(fillers, quote_params, svc_id_dict=svc_id_dict)
+    response = {'rate_cards':rate_cards}
+    return response
 
 
 def try_parse_int(x):

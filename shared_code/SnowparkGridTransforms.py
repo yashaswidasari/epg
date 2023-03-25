@@ -25,9 +25,10 @@ def check_apt_box(snow_session, volume, address_rules, *args, **kwargs):
     return address_match
 
 
-def add_post_zones_lh(snow_session, post_volume: DataFrame, current_zones_override=None, *args, **kwargs):
-    current_zones = current_zones_override if current_zones_override else snow_session.session.table('ODS.XPO_DBO_CANADAZONES')
-    ei_linehaul = snow_session.session.table('ODS.XPO_DBO_ENTRYINDUCTIONLINEHAUL')
+def add_post_zones_lh(snow_session, post_volume: DataFrame, current_zones_override=None, vendor_override=None, *args, **kwargs):
+    current_zones = current_zones_override if current_zones_override else snow_session.session.table('ODS.XPO_DBO_COUNTRYZONES')
+    vendors = vendor_override if vendor_override else snow_session.tables.vendors
+    ei_linehaul = snow_session.session.table('ODS.XPO_DBO_ENTRYINDUCTIONLINEHAUL').with_column_renamed('ID', 'EILHID')
     ei_points = snow_session.session.table('ODS.XPO_DBO_ENTRYINDUCTIONPOINTS')
     cust_induct = snow_session.session.table('ODS.XPO_DBO_CUSTOMERINDUCTION').with_column_renamed('CUSTNO', 'CUST_INDUCT_CUSTNO')
     
@@ -67,8 +68,9 @@ def add_post_zones_lh(snow_session, post_volume: DataFrame, current_zones_overri
     zone_join = (volume_inducted.join(current_zones,
                                   encode_dense_zip_col(volume_inducted['zip'], 6).between(encode_dense_zip_col(current_zones['StartPost'], 6), 
                                                                                                 encode_dense_zip_col(current_zones['EndPost'], 6))
-                                  & (volume_inducted['INDUCTIONID'] == current_zones['INDUCTIONID']))
-                .join(snow_session.tables.vendors.select(col('VENDORID'), col('CANADAZONEPREFIX')), 
+                                  & (volume_inducted['INDUCTIONID'] == current_zones['INDUCTIONID'])
+                                  & (volume_inducted['ORIGINAL_CTY'] == current_zones['COUNTRYCODE']))
+                .join(vendors.select(col('VENDORID'), col('CANADAZONEPREFIX')), 
                       'VENDORID')
                 .with_column('CTYCODE', concat(coalesce(col('CANADAZONEPREFIX'), lit('')), col('ZONE')))
                 .with_column_renamed('PERLB', 'EILH_LB'))
@@ -114,7 +116,8 @@ def except_final_services(snow_session:SnowflakeQuoterSession, routing_grid, **k
 def match_matrix_rows(snow_session: SnowflakeQuoterSession, volume, vendor_override=None, **kwargs):
     vendors = vendor_override if vendor_override else snow_session.tables.vendors
     target_date = dt.datetime.today().strftime('%Y-%m-%d')
-    matrix = snow_session.tables.matrix.filter(to_date(lit(target_date), 'yyyy-MM-dd').between(col('StartDate'), col('EndDate')))
+    matrix = snow_session.tables.matrix.filter(to_date(lit(target_date), 'yyyy-MM-dd').between(col('StartDate'), col('EndDate'))
+        & col('XPO_DELETED_DATETIME').is_null())
     matrix_augmented = (matrix.join(vendors.select('VendorID', 'Vendor', 
                                                    when(coalesce(col('DimWeight'), lit(0)) == 1, 
                                                         lit(1) / col('DimDivisor')).otherwise(lit(0)).alias('DimFactor'),
@@ -217,7 +220,7 @@ def matrix_pivot_details(snow_session: SnowflakeQuoterSession, matrix_grid, pivo
 
     matrix_id_window = Window.partition_by(col('MatrixID'))
 
-    exchange_hotfix = when(col('CostDesc') == lit('FUELSURCHARGE__PERCENT'), lit(1)).otherwise(col('ExchangeRate'))
+    exchange_hotfix = when(col('CostDesc') == lit('FUELSURCHARGE__PERCENT'), lit(1.0)).otherwise(col('ExchangeRate'))
     
     matrix_det_join = (matrix_grid
                         .join(matrix_det, 'MatrixID')
@@ -256,7 +259,7 @@ def match_temp_matrix_rows(snow_session, volume, temp_matrix, vendor_override=No
     
     vendor_dim_wt = (volume['DIM_L'] * volume['DIM_W'] * volume['DIM_H'] * temp_mtx_augmented['DimFactor'])
     vendor_bill_wt = when(volume['Weight'] < vendor_dim_wt, vendor_dim_wt).otherwise(volume['Weight'])
-    matrix_kg_selector = vendor_bill_wt/2.2046/volume['pieces']-0.001
+    matrix_kg_selector = vendor_bill_wt/2.2046/volume['pieces']-0.0001
     
     dim_max_selector = ((volume['DIM_L'] <= temp_mtx_augmented['LengthMax'])
                         & (volume['DIM_W'] <= temp_mtx_augmented['WidthMax'])
