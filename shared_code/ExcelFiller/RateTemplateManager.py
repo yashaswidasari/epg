@@ -38,7 +38,7 @@ class RateCardManager(ABC):
         self.aux_end_tabs_map = aux_end_tabs_map if aux_end_tabs_map else {}
             
     def save_new_workbook(self, filename: str, filler_inputs: List[FillerInputModel], 
-                          quote_params: QuoteParamsModel, in_mem: bool = True, *args, **kwargs):
+                          quote_params: QuoteParamsModel, in_mem: bool = False, *args, **kwargs):
         wb = xl.load_workbook(self.template)
         start_tabs_used = self.start_tabs.copy()
         fill_tabs_used = []

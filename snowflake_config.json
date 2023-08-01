@@ -1,8 +1,8 @@
 {
     "account": "xf56565.west-us-2.azure",
-    "user": "SARATEMANAGEMENT",
-    "password": "8mv!qcS)",
-    "warehouse": "DATACLOUD_PROD_ANALYTICS",
-    "database": "DATACLOUD",
-    "schema": "ODS"
+    "user": "SAETLDEV",
+    "password": "5dQgRK6WvjLqBGp6new",
+    "warehouse": "DATACLOUD_TEST_WH",
+    "database": "DATACLOUD_TEST",
+    "schema": "RATES_MANAGEMENT"
  }

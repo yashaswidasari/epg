@@ -5,7 +5,7 @@ from shared_code.AppWrappers import save_increase
 import json
 from shared_code.DriveComms.DriveComms import AzureDriveComms, LocalDriveComms
 
-#drive_comms = LocalDriveComms('C:/Users/rtse/Documents/Python Scripts/epg wkg/2022-08-10 Rate Card Flask Demo/dummy_drive')
+drive_comms = LocalDriveComms('C:/Users/ydasari/Desktop/RateIncrease/dummyResults')
 #drive_comms = AzureDriveComms('azure_storage_config.json')
 
 async def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -23,5 +23,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
     else:
         eventloop = asyncio.get_event_loop()
         response = await save_increase(request, eventloop)
+
+    # drive_comms.save_file_bytes(response)
 
     return func.HttpResponse(json.dumps(response))

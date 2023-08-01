@@ -101,7 +101,7 @@ class RateCardsGenerator:
             107:['CA FSC'],
             71: ['ePacket Rate Calculator', 'ePacket Zone List']
         }
-
+# Need help to understand this 
         self.template_map = {
             'ePG Parcel': ShoppedTemplateManager('excel_templates/parceltariff.xlsx', end_tabs=['Disclosure'], aux_end_tabs_map=aux_sheet_map),
             'ePacket': PcLbEPSManager('excel_templates/eps.xlsx', template_source_tab='ePacket', end_tabs=[], aux_end_tabs_map=aux_sheet_map),

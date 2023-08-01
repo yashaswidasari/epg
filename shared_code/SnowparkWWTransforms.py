@@ -142,7 +142,7 @@ def format_ww_intervals(snow_session: SnowflakeQuoterSession, cost_grid, **kwarg
     return short_results
 
 
-def format_ww_file(snow_session: SnowflakeQuoterSession, cost_intervals:DataFrame, ww_table:DataFrame=None, debug=False, **kwargs):
+def format_ww_file(snow_session: SnowflakeQuoterSession, cost_intervals:DataFrame, ww_table:DataFrame=None, **kwargs):
     final_select_cols = ['IDMailGroupCode', 'prev_weight', 'group_wt_max', 'IndiciaNumber', 'Bin', 
                      'MaxBagWeight', 'MinWidth', 'MaxWidth', 'MinHeight', 'MaxHeight', 
                      'MinThickness', 'MaxThickness', 'Zone', 'Rate', 'Bagging', 'Print', 'CodeToPrint']
@@ -158,12 +158,12 @@ def format_ww_file(snow_session: SnowflakeQuoterSession, cost_intervals:DataFram
                                 ),
                                 'left')
                        .join(idmail_indicias, 
-                                on = (
+                                (
                                     ((idmail_indicias['ctycode'] == cost_intervals['CTYCODE']) | (idmail_indicias['ctycode'] == lit('ZZ')))
                                     & (idmail_indicias['VENDOR'] == cost_intervals['VENDOR'])
                                     & ((idmail_indicias['FORMAT'] == cost_intervals['MAIL_FORMAT']) | (idmail_indicias['FORMAT'] == lit('ALL')))
                                 ),
-                                join_type='left')
+                                'left')
                        .with_column('ww_rank', row_number().over(ww_file_rank_window))
                        .filter(col('ww_rank') == lit(1))
                        .with_column('FormattedBin', coalesce(lpad(col('BIN'), 3, lit('0')), lit('000')))
@@ -182,6 +182,6 @@ def format_ww_file(snow_session: SnowflakeQuoterSession, cost_intervals:DataFram
                               lit('Y').alias('Bagging'),
                               lit('Y').alias('Print'),
                               col('FormattedBin').alias('CodeToPrint'))
-                       .sort([col('IDMailGroupCode'), col('prev_weight'), col('group_wt_max'), col('MaxBagWeight'), col('MinWidth'), col('MaxWidth'), col('MinHeight'), col('MaxHeight'), col('MinThickness'), col('MaxThickness')]))
+                       .sort([col('IDMailGroupCode'), col('MinWidth'), col('MaxWidth'), col('MinHeight'), col('MaxHeight'), col('MinThickness'), col('MaxThickness'), col('prev_weight'), col('group_wt_max'), col('MaxBagWeight')]))
     
-    return file_joined
+    return file_joined.select(final_select_cols)

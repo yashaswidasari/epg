@@ -3,11 +3,12 @@ import logging
 import azure.functions as func
 from dataclasses import dataclass
 import json
-from shared_code.DriveComms.DriveComms import AzureDriveComms
+from shared_code.DriveComms.DriveComms import AzureDriveComms, LocalDriveComms
 from shared_code.AppWrappers import confirm_quotes
 from typing import List
 
-drive_comms = AzureDriveComms('azure_storage_config.json')
+drive_comms = LocalDriveComms('C:/Users/ydasari/Desktop/RateIncrease/dummyResults')
+# drive_comms = AzureDriveComms('azure_storage_config.json')
 
 @dataclass
 class ConfirmQuoteRequest:
